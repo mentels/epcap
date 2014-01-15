@@ -45,6 +45,8 @@ static ssize_t read_exact(int, void *, ssize_t);
 static void usage(EPCAP_STATE *);
 
 int child_exited = 0;
+struct pcap_stat stats;
+int pkt_cnt = 0;
 
 /* On some platforms (Linux), poll() (used by pcap)
  * will return EINVAL if RLIMIT_NOFILES < numfd */
@@ -113,7 +115,8 @@ main(int argc, char *argv[])
     argc -= optind;
     argv += optind;
 
-    IS_NULL(ep->filt = strdup( (argc == 1) ? argv[0] : EPCAP_FILTER));
+    IS_NULL(ep->filt = "");//strdup( (argc == 1) ? argv[0] : EPCAP_FILTER));
+
 
     IS_LTZERO(fd = open("/dev/null", O_RDWR));
 
@@ -221,8 +224,16 @@ epcap_open(EPCAP_STATE *ep)
         if (ep->dev == NULL)
             PCAP_ERRBUF(ep->dev = pcap_lookupdev(errbuf));
 
-        PCAP_ERRBUF(ep->p = pcap_open_live(ep->dev, ep->snaplen,
-                    ep->opt & EPCAP_OPT_PROMISC, ep->timeout, errbuf));
+        //PCAP_ERRBUF(ep->p = pcap_open_live(ep->dev, ep->snaplen,
+          //          ep->opt & EPCAP_OPT_PROMISC, ep->timeout, errbuf));
+        ep->p = pcap_create(ep->dev, errbuf);
+        pcap_set_snaplen(ep->p, ep->snaplen);
+        pcap_set_promisc(ep->p, 1);
+        pcap_set_timeout(ep->p, ep->timeout);
+        if(pcap_set_buffer_size(ep->p, 70*1024*1024) == -1){
+          VERBOSE(1, "Setting buffer size failed");
+        }
+        pcap_activate(ep->p);
 
         /* monitor mode */
 #ifdef PCAP_ERROR_RFMON_NOTSUP
@@ -232,6 +243,7 @@ epcap_open(EPCAP_STATE *ep)
     }
 
     ep->datalink = pcap_datalink(ep->p);
+    pcap_setdirection(ep->p, PCAP_D_IN);
 
     return 0;
 }
@@ -306,6 +318,11 @@ epcap_ctrl(const char *ctrl_evt)
 epcap_response(u_char *user, const struct pcap_pkthdr *hdr, const u_char *pkt)
 {
     EPCAP_STATE *ep = (EPCAP_STATE *)user;
+    VERBOSE(1, "got packet successfully\n");
+    ++pkt_cnt;
+    if(pkt_cnt % 100 == 0 && pcap_stats(ep->p, &stats) == 0) {
+       VERBOSE(1,"Recv: %u, Dropped:%u\n", stats.ps_recv, stats.ps_drop);
+    }
     ei_x_buff msg = {0};
 
     IS_FALSE(ei_x_new_with_version(&msg));
